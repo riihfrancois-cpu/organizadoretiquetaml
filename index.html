@@ -444,7 +444,7 @@
 
   <div id="resultsSection">
     <button class="btn-romaneio" id="btnRomaneio">
-      📋 Baixar Romaneio de Separação (PDF)
+      📊 Baixar Romaneio de Separação (Excel)
     </button>
 
     <div class="section-title">
@@ -690,266 +690,195 @@ function renderResults(skuMap, unidentified) {
 
 // ─── Generate Romaneio PDF — Fergra brand ────────────────────
 async function downloadRomaneio() {
-  const { PDFDocument, rgb, StandardFonts } = PDFLib;
-  const doc = await PDFDocument.create();
-  const fontBold   = await doc.embedFont(StandardFonts.HelveticaBold);
-  const fontNormal = await doc.embedFont(StandardFonts.Helvetica);
-
-  const pageW = 595.28, pageH = 841.89;
-  const marginL = 48, marginR = 48;
-  const contentW = pageW - marginL - marginR;
-
-  // ── Fergra brand palette ──────────────────────────────────
-  const cWhite    = rgb(1, 1, 1);
-  const cBlack    = rgb(0.12, 0.12, 0.12);
-  const cGreen    = rgb(0.427, 0.753, 0.294);   // #6DC04B — Fergra green
-  const cGreenDark= rgb(0.33, 0.60, 0.22);       // darker for totals text
-  const cGray     = rgb(0.66, 0.66, 0.66);        // #A8A8A8 — Fergra text gray
-  const cGrayDark = rgb(0.40, 0.40, 0.40);
-  const cGrayLight= rgb(0.95, 0.95, 0.95);        // row alt
-  const cGrayMid  = rgb(0.88, 0.88, 0.88);        // borders
-  const cHeaderBg = rgb(0.22, 0.22, 0.22);        // table header dark
-  const cGreenBg  = rgb(0.427, 0.753, 0.294);
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js');
 
   const now = new Date();
   const dateStr = now.toLocaleDateString('pt-BR');
   const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
-  const totalPedidos  = romaneioData.reduce((a,v) => a + v.pedidos, 0);
-  const totalUnidades = romaneioData.reduce((a,v) => a + v.totalQty, 0);
-  const sorted = [...romaneioData].sort((a,b) => b.totalQty - a.totalQty);
+  const sorted = [...romaneioData].sort((a, b) => b.totalQty - a.totalQty);
+  const totalPedidos  = romaneioData.reduce((a, v) => a + v.pedidos,  0);
+  const totalUnidades = romaneioData.reduce((a, v) => a + v.totalQty, 0);
 
-  // Pagination
-  const rowH = 30;
-  const firstHeaderH = 240;
-  const restHeaderH  = 80;
-  const footerH      = 52;
-  const rowsPage1 = Math.floor((pageH - firstHeaderH - footerH) / rowH);
-  const rowsRest  = Math.floor((pageH - restHeaderH  - footerH) / rowH);
+  const wb = XLSX.utils.book_new();
 
-  const pages = [];
-  let rem = [...sorted];
-  pages.push(rem.splice(0, rowsPage1));
-  while (rem.length) pages.push(rem.splice(0, rowsRest));
+  // ── Build sheet data ───────────────────────────────────────
+  const rows = [];
 
-  const cols = {
-    num: { x: marginL + 8,               w: 28  },
-    sku: { x: marginL + 44,              w: 240 },
-    ped: { x: marginL + contentW - 190,  w: 90  },
-    qty: { x: marginL + contentW - 90,   w: 82  },
-  };
+  // Title rows
+  rows.push(['FERGRAF — Romaneio de Separação']);
+  rows.push([`Mercado Livre · Emitido em: ${dateStr} às ${timeStr}`]);
+  rows.push([]);
 
-  for (let pi = 0; pi < pages.length; pi++) {
-    const page = doc.addPage([pageW, pageH]);
+  // Summary row
+  rows.push(['SKUs únicos', 'Total pedidos', 'Total unidades']);
+  rows.push([sorted.length, totalPedidos, totalUnidades]);
+  rows.push([]);
 
-    // White background
-    page.drawRectangle({ x: 0, y: 0, width: pageW, height: pageH, color: cWhite });
+  // Table header
+  rows.push(['#', 'SKU', 'Pedidos', 'Unidades']);
 
-    let y = pageH;
+  // Data rows
+  sorted.forEach((item, i) => {
+    rows.push([i + 1, item.sku, item.pedidos, item.totalQty]);
+  });
 
-    // ── Header bar ────────────────────────────────────────────
-    page.drawRectangle({ x: 0, y: pageH - 70, width: 6, height: 70, color: cGreen });
+  // Total row
+  rows.push(['', 'TOTAL GERAL', `=SUM(C8:C${7 + sorted.length})`, `=SUM(D8:D${7 + sorted.length})`]);
 
-    // Embed real FERGRAF logo
-    if (!doc._fergrafLogo) {
-      const logoBytes = Uint8Array.from(atob(FERGRAF_LOGO_B64), c => c.charCodeAt(0));
-      doc._fergrafLogo = await doc.embedPng(logoBytes);
-    }
-    const logoDims = doc._fergrafLogo.scale(0.40);
-    page.drawImage(doc._fergrafLogo, {
-      x: marginL, y: pageH - 60,
-      width: logoDims.width, height: logoDims.height,
-    });
+  const ws = XLSX.utils.aoa_to_sheet(rows);
 
-    // Document title aligned right
-    const title = 'ROMANEIO DE SEPARAÇÃO';
-    const titleW = fontBold.widthOfTextAtSize(title, 13);
-    page.drawText(title, {
-      x: pageW - marginR - titleW, y: pageH - 38, font: fontBold, size: 13, color: cGrayDark
-    });
+  // ── Column widths ──────────────────────────────────────────
+  ws['!cols'] = [
+    { wch: 6  },  // #
+    { wch: 22 },  // SKU
+    { wch: 14 },  // Pedidos
+    { wch: 16 },  // Unidades
+  ];
 
-    // Green underline under title
-    page.drawRectangle({
-      x: pageW - marginR - titleW, y: pageH - 43,
-      width: titleW, height: 2, color: cGreen
-    });
+  // ── Merge title cells ──────────────────────────────────────
+  ws['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },  // Title
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 3 } },  // Subtitle
+  ];
 
-    // Separator line full width
-    page.drawRectangle({ x: 0, y: pageH - 72, width: pageW, height: 1.5, color: cGrayMid });
+  // ── Cell styles via SheetJS (limited without Pro, use named styles) ──
+  // We apply styles via a helper
+  const FERGRAF_GREEN  = 'FF6DC04B';
+  const FERGRAF_GRAY   = 'FFA8A8A8';
+  const DARK_BG        = 'FF333333';
+  const LIGHT_GREEN_BG = 'FFE8F5EE';
+  const WHITE          = 'FFFFFFFF';
+  const BLACK          = 'FF1A1A1A';
+  const HEADER_BG      = 'FF2D2D2D';
 
-    y = pageH - 72;
-
-    // ── Page 1 summary block ───────────────────────────────────
-    if (pi === 0) {
-      y -= 16;
-
-      // Sub-label
-      page.drawText('Resumo do lote', {
-        x: marginL, y, font: fontBold, size: 9, color: cGreen,
-        opacity: 1
-      });
-      y -= 14;
-
-      // 3 stat cards
-      const cardW = (contentW - 20) / 3;
-      const cards = [
-        { label: 'SKUs únicos',    value: String(sorted.length),  accent: cGreen    },
-        { label: 'Total pedidos',  value: String(totalPedidos),   accent: cGrayDark },
-        { label: 'Total unidades', value: String(totalUnidades),  accent: cGreen    },
-      ];
-
-      cards.forEach((c, ci) => {
-        const cx = marginL + ci * (cardW + 10);
-        const cy = y - 58;
-
-        // Card border
-        page.drawRectangle({ x: cx, y: cy, width: cardW, height: 58,
-          color: cWhite, borderColor: cGrayMid, borderWidth: 1 });
-
-        // Left color bar
-        page.drawRectangle({ x: cx, y: cy, width: 4, height: 58, color: c.accent });
-
-        // Value
-        const vw = fontBold.widthOfTextAtSize(c.value, 22);
-        page.drawText(c.value, {
-          x: cx + (cardW - vw) / 2, y: cy + 26,
-          font: fontBold, size: 22, color: c.accent
-        });
-
-        // Label
-        const lw = fontNormal.widthOfTextAtSize(c.label, 8);
-        page.drawText(c.label, {
-          x: cx + (cardW - lw) / 2, y: cy + 10,
-          font: fontNormal, size: 8, color: cGray
-        });
-      });
-
-      y -= 58 + 14;
-
-      // Date
-      page.drawText(`Emitido em: ${dateStr} às ${timeStr}`, {
-        x: marginL, y, font: fontNormal, size: 8, color: cGray
-      });
-      y -= 18;
-
-    } else {
-      y -= 12;
-      const contLabel = `Romaneio de Separação — continuação  (pág. ${pi+1} / ${pages.length})`;
-      page.drawText(contLabel, { x: marginL, y, font: fontNormal, size: 9, color: cGray });
-      y -= 16;
-    }
-
-    // ── Table header ──────────────────────────────────────────
-    page.drawRectangle({ x: marginL, y: y - 26, width: contentW, height: 26, color: cHeaderBg });
-
-    // Green left accent on table header
-    page.drawRectangle({ x: marginL, y: y - 26, width: 4, height: 26, color: cGreen });
-
-    const headers = [
-      { text: '#',        col: 'num', align: 'left'  },
-      { text: 'SKU',      col: 'sku', align: 'left'  },
-      { text: 'PEDIDOS',  col: 'ped', align: 'right' },
-      { text: 'UNIDADES', col: 'qty', align: 'right' },
-    ];
-    headers.forEach(h => {
-      const col = cols[h.col];
-      const tw = fontBold.widthOfTextAtSize(h.text, 8);
-      const tx = h.align === 'right' ? col.x + col.w - tw : col.x;
-      page.drawText(h.text, { x: tx, y: y - 18, font: fontBold, size: 8, color: cWhite });
-    });
-    y -= 26;
-
-    // ── Table rows ────────────────────────────────────────────
-    const globalOff = pi === 0 ? 0 : rowsPage1 + (pi - 1) * rowsRest;
-
-    pages[pi].forEach((item, ri) => {
-      const rowY = y - (ri + 1) * rowH;
-
-      // Alt row bg
-      if (ri % 2 === 1) {
-        page.drawRectangle({ x: marginL, y: rowY, width: contentW, height: rowH, color: cGrayLight });
-      }
-
-      // Bottom border
-      page.drawLine({
-        start: { x: marginL, y: rowY },
-        end:   { x: marginL + contentW, y: rowY },
-        thickness: 0.4, color: cGrayMid
-      });
-
-      const mid = rowY + rowH / 2 - 5;
-
-      // # col
-      page.drawText(String(globalOff + ri + 1), {
-        x: cols.num.x, y: mid, font: fontNormal, size: 8, color: cGray
-      });
-
-      // SKU
-      page.drawText(item.sku, { x: cols.sku.x, y: mid, font: fontBold, size: 10, color: cBlack });
-
-      // Pedidos
-      const pedStr = String(item.pedidos);
-      const pw = fontNormal.widthOfTextAtSize(pedStr, 10);
-      page.drawText(pedStr, {
-        x: cols.ped.x + cols.ped.w - pw, y: mid, font: fontNormal, size: 10, color: cGrayDark
-      });
-
-      // Unidades — green highlight pill
-      const qtyStr = String(item.totalQty);
-      const qw = fontBold.widthOfTextAtSize(qtyStr, 10);
-      const pillX = cols.qty.x + cols.qty.w - qw - 10;
-      const pillW = qw + 14;
-      page.drawRectangle({ x: pillX - 2, y: mid - 3, width: pillW, height: 16,
-        color: rgb(0.91, 0.97, 0.87), borderColor: cGreen, borderWidth: 0.8 });
-      page.drawText(qtyStr, {
-        x: pillX + 5, y: mid, font: fontBold, size: 10, color: cGreenDark
-      });
-    });
-
-    // ── Totals row (last page) ────────────────────────────────
-    if (pi === pages.length - 1) {
-      const totY = y - pages[pi].length * rowH - 1;
-
-      page.drawRectangle({ x: marginL, y: totY - 30, width: contentW, height: 30, color: cGreen });
-      page.drawRectangle({ x: marginL, y: totY - 30, width: 4, height: 30, color: cGreenDark });
-
-      page.drawText('TOTAL GERAL', {
-        x: cols.num.x, y: totY - 20, font: fontBold, size: 10, color: cWhite
-      });
-
-      const tpStr = String(totalPedidos);
-      const tpw = fontBold.widthOfTextAtSize(tpStr, 10);
-      page.drawText(tpStr, {
-        x: cols.ped.x + cols.ped.w - tpw, y: totY - 20, font: fontBold, size: 10, color: cWhite
-      });
-
-      const tqStr = String(totalUnidades);
-      const tqw = fontBold.widthOfTextAtSize(tqStr, 12);
-      page.drawText(tqStr, {
-        x: cols.qty.x + cols.qty.w - tqw - 4, y: totY - 21, font: fontBold, size: 12, color: cWhite
-      });
-    }
-
-    // ── Footer ────────────────────────────────────────────────
-    page.drawRectangle({ x: 0, y: 0, width: pageW, height: 36, color: cGrayLight });
-    page.drawRectangle({ x: 0, y: 36, width: pageW, height: 1, color: cGrayMid });
-    page.drawRectangle({ x: 0, y: 35, width: 6, height: 36, color: cGreen });
-
-    page.drawText('FERGRAF  ·  Romaneio de Separação  ·  Mercado Livre', {
-      x: marginL, y: 13, font: fontNormal, size: 8, color: cGray
-    });
-    const dtw = fontNormal.widthOfTextAtSize(`${dateStr}  ${timeStr}`, 8);
-    page.drawText(`${dateStr}  ${timeStr}`, {
-      x: pageW - marginR - dtw, y: 13, font: fontNormal, size: 8, color: cGray
-    });
+  function cellRef(r, c) {
+    return XLSX.utils.encode_cell({ r, c });
   }
 
-  const bytes = await doc.save();
-  const blob = new Blob([bytes], { type: 'application/pdf' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  function applyStyle(ref, style) {
+    if (!ws[ref]) ws[ref] = { t: 's', v: '' };
+    ws[ref].s = style;
+  }
+
+  // Title style
+  applyStyle('A1', {
+    font: { bold: true, sz: 18, color: { rgb: '336DC04B' } },
+    alignment: { horizontal: 'left', vertical: 'center' },
+    fill: { fgColor: { rgb: WHITE } }
+  });
+
+  // Subtitle style
+  applyStyle('A2', {
+    font: { sz: 10, color: { rgb: 'FF888888' } },
+    alignment: { horizontal: 'left' }
+  });
+
+  // Summary header row (row index 3)
+  ['A4', 'B4', 'C4'].forEach(ref => {
+    applyStyle(ref, {
+      font: { bold: true, sz: 9, color: { rgb: WHITE } },
+      fill: { fgColor: { rgb: HEADER_BG } },
+      alignment: { horizontal: 'center' },
+      border: { bottom: { style: 'thin', color: { rgb: 'FF6DC04B' } } }
+    });
+  });
+
+  // Summary values row (row index 4)
+  ['A5', 'B5', 'C5'].forEach((ref, ci) => {
+    applyStyle(ref, {
+      font: { bold: true, sz: 14, color: { rgb: FERGRAF_GREEN } },
+      fill: { fgColor: { rgb: LIGHT_GREEN_BG } },
+      alignment: { horizontal: 'center' },
+      border: { bottom: { style: 'thin', color: { rgb: 'FFDDDDDD' } } }
+    });
+  });
+
+  // Table header row (row index 6)
+  ['A7', 'B7', 'C7', 'D7'].forEach(ref => {
+    applyStyle(ref, {
+      font: { bold: true, sz: 10, color: { rgb: WHITE } },
+      fill: { fgColor: { rgb: HEADER_BG } },
+      alignment: { horizontal: ref === 'B7' ? 'left' : 'center' },
+      border: {
+        bottom: { style: 'medium', color: { rgb: FERGRAF_GREEN } },
+        top:    { style: 'thin',   color: { rgb: 'FF555555' } }
+      }
+    });
+  });
+
+  // Data rows
+  sorted.forEach((_, i) => {
+    const r = 7 + i; // 0-indexed row
+    const isAlt = i % 2 === 1;
+    const bgColor = isAlt ? 'FFF5F5F2' : WHITE;
+
+    applyStyle(cellRef(r, 0), { // #
+      font: { sz: 9, color: { rgb: 'FF999999' } },
+      fill: { fgColor: { rgb: bgColor } },
+      alignment: { horizontal: 'center' }
+    });
+    applyStyle(cellRef(r, 1), { // SKU
+      font: { bold: true, sz: 10, color: { rgb: BLACK }, name: 'Courier New' },
+      fill: { fgColor: { rgb: bgColor } },
+      alignment: { horizontal: 'left' }
+    });
+    applyStyle(cellRef(r, 2), { // Pedidos
+      font: { sz: 10, color: { rgb: BLACK } },
+      fill: { fgColor: { rgb: bgColor } },
+      alignment: { horizontal: 'center' }
+    });
+    applyStyle(cellRef(r, 3), { // Unidades
+      font: { bold: true, sz: 11, color: { rgb: '33197A4E' } },
+      fill: { fgColor: { rgb: bgColor } },
+      alignment: { horizontal: 'center' },
+      border: { left: { style: 'thin', color: { rgb: 'FFCCCCCC' } } }
+    });
+  });
+
+  // Total row
+  const totalRow = 7 + sorted.length;
+  applyStyle(cellRef(totalRow, 0), {
+    fill: { fgColor: { rgb: FERGRAF_GREEN } }
+  });
+  applyStyle(cellRef(totalRow, 1), {
+    font: { bold: true, sz: 10, color: { rgb: WHITE } },
+    fill: { fgColor: { rgb: FERGRAF_GREEN } },
+    alignment: { horizontal: 'left' }
+  });
+  applyStyle(cellRef(totalRow, 2), {
+    font: { bold: true, sz: 10, color: { rgb: WHITE } },
+    fill: { fgColor: { rgb: FERGRAF_GREEN } },
+    alignment: { horizontal: 'center' }
+  });
+  applyStyle(cellRef(totalRow, 3), {
+    font: { bold: true, sz: 12, color: { rgb: WHITE } },
+    fill: { fgColor: { rgb: FERGRAF_GREEN } },
+    alignment: { horizontal: 'center' }
+  });
+
+  // Row heights
+  ws['!rows'] = [
+    { hpt: 32 }, // title
+    { hpt: 16 }, // subtitle
+    { hpt: 6  }, // spacer
+    { hpt: 18 }, // summary header
+    { hpt: 28 }, // summary values
+    { hpt: 6  }, // spacer
+    { hpt: 22 }, // table header
+  ];
+  sorted.forEach(() => ws['!rows'].push({ hpt: 20 }));
+  ws['!rows'].push({ hpt: 24 }); // total row
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Romaneio');
+
+  // ── Generate and download ──────────────────────────────────
+  const wbOut = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+  const blob  = new Blob([wbOut], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url   = URL.createObjectURL(blob);
+  const a     = document.createElement('a');
   a.href = url;
-  a.download = `romaneio_fergraf_${dateStr.replace(/\//g,'-')}.pdf`;
+  a.download = `romaneio_fergraf_${dateStr.replace(/\//g, '-')}.xlsx`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
